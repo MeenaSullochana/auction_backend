@@ -17,26 +17,37 @@ import { authRequired } from "./helpers.js";
 dotenv.config();
 await connectDb();
 
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+const frontendUrls = (process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const allowedOrigins = new Set([
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  frontendUrl,
+  "https://theauction-house.netlify.app",
+  ...frontendUrls,
 ]);
+
+function corsOrigin(origin, cb) {
+  if (!origin) return cb(null, true);
+  if (allowedOrigins.has(origin)) return cb(null, true);
+  if (/^https:\/\/[\w-]+\.netlify\.app$/.test(origin)) return cb(null, true);
+  return cb(null, false);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+    origin: corsOrigin,
     credentials: true,
   },
 });
 app.set("io", io);
 
 app.use(cors({
-  origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+  origin: corsOrigin,
   credentials: true,
 }));
 app.use(express.json());
