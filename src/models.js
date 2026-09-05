@@ -250,15 +250,15 @@ const siteSettingSchema = new mongoose.Schema(
     wordThe: { type: String, default: "THE" },
     wordAuction: { type: String, default: "AUCTION" },
     wordHouse: { type: String, default: "HOUSE" },
-    colorThe: { type: String, default: "#93C47D" },
-    colorAuction: { type: String, default: "#FFFFFF" },
-    colorHouse: { type: String, default: "#93C47D" },
-    colorBg: { type: String, default: "#050605" },
-    colorPanel: { type: String, default: "#121A13" },
-    colorAccent: { type: String, default: "#93C47D" },
-    colorAccent2: { type: String, default: "#C5E3B4" },
-    colorText: { type: String, default: "#F4F7F2" },
-    colorMuted: { type: String, default: "#A8B8A4" },
+    colorThe: { type: String, default: "#5F8F54" },
+    colorAuction: { type: String, default: "#1A1E1A" },
+    colorHouse: { type: String, default: "#5F8F54" },
+    colorBg: { type: String, default: "#F2F5F2" },
+    colorPanel: { type: String, default: "#FFFFFF" },
+    colorAccent: { type: String, default: "#7AAB6D" },
+    colorAccent2: { type: String, default: "#5F8F54" },
+    colorText: { type: String, default: "#1A1E1A" },
+    colorMuted: { type: String, default: "#5E6A5E" },
     adminNotifyEmail: { type: String, default: "auction@gmail.com" },
     vendorEnrolmentMail: {
       type: String,
@@ -274,23 +274,38 @@ export const DEFAULT_SITE = {
   wordThe: "THE",
   wordAuction: "AUCTION",
   wordHouse: "HOUSE",
-  colorThe: "#93C47D",
-  colorAuction: "#FFFFFF",
-  colorHouse: "#93C47D",
-  colorBg: "#050605",
-  colorPanel: "#121A13",
-  colorAccent: "#93C47D",
-  colorAccent2: "#C5E3B4",
-  colorText: "#F4F7F2",
-  colorMuted: "#A8B8A4",
+  colorThe: "#5F8F54",
+  colorAuction: "#1A1E1A",
+  colorHouse: "#5F8F54",
+  colorBg: "#F2F5F2",
+  colorPanel: "#FFFFFF",
+  colorAccent: "#7AAB6D",
+  colorAccent2: "#5F8F54",
+  colorText: "#1A1E1A",
+  colorMuted: "#5E6A5E",
   adminNotifyEmail: "auction@gmail.com",
   vendorEnrolmentMail:
     "Dear Vendor,\n\nThank you for your enquiry with The Auction House.\n\nPlease find enclosed / request for:\n1. Vendor enrolment documents\n2. Auction House terms & conditions\n3. Vendor registration fee details\n\nKindly complete registration after document submission.\n\nRegards,\nThe Auction House\nChennai",
 };
 
+const LEGACY_DARK_BG = new Set(["#050605", "#000000", "#0a0f0b", "#121a13"]);
+
 export async function getSiteSettings() {
   let doc = await SiteSetting.findOne({ key: "site" });
   if (!doc) doc = await SiteSetting.create(DEFAULT_SITE);
+  const bg = String(doc.colorBg || "").toLowerCase();
+  if (LEGACY_DARK_BG.has(bg)) {
+    doc.colorBg = DEFAULT_SITE.colorBg;
+    doc.colorPanel = DEFAULT_SITE.colorPanel;
+    doc.colorAccent = DEFAULT_SITE.colorAccent;
+    doc.colorAccent2 = DEFAULT_SITE.colorAccent2;
+    doc.colorText = DEFAULT_SITE.colorText;
+    doc.colorMuted = DEFAULT_SITE.colorMuted;
+    doc.colorThe = DEFAULT_SITE.colorThe;
+    doc.colorAuction = DEFAULT_SITE.colorAuction;
+    doc.colorHouse = DEFAULT_SITE.colorHouse;
+    await doc.save();
+  }
   return typeof doc.toJSON === "function" ? doc.toJSON() : doc;
 }
 
