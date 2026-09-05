@@ -6,7 +6,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import XLSX from "xlsx";
 import { Auction, Bid, Category, Contact, Company, DEFAULT_SITE, getSiteSettings, HeroSlide, Product, SiteSetting, Transaction, User, Vendor, Winner } from "../models.js";
-import { isExpired, isLive, isUpcoming, parseAssign, wrap } from "../helpers.js";
+import { isExpired, isLive, isUpcoming, maxBid, parseAssign, topBidders, wrap } from "../helpers.js";
 
 async function nextAuctionUniqueId(dateStr) {
   let d = dateStr ? new Date(String(dateStr).replace(" ", "T")) : new Date();
@@ -240,6 +240,82 @@ router.get("/auction/:id", wrap(async (req, res) => {
   const a = await Auction.findOne({ id: Number(req.params.id) }).lean();
   if (!a) return res.status(404).json({ message: "Auction not found" });
   res.json({ auction: await hydrateAuction(a) });
+}));
+
+/** Admin live bidding room — full auction + H1/H2/H3 per item. */
+router.get("/auction/:id/live-room", wrap(async (req, res) => {
+  const raw = await Auction.findOne({ id: Number(req.params.id) }).lean();
+  if (!raw) return res.status(404).json({ message: "Auction not found" });
+  const auction = await hydrateAuction(raw);
+  const products = await Product.find({ auction_id: auction.id, status: { $ne: 0 } }).sort({ id: 1 }).lean();
+  const productIds = products.map((p) => p.id);
+  const assignedIds = parseAssign(auction.assign_user);
+  const allBids = productIds.length
+    ? await Bid.find({ product_id: { $in: productIds } }).lean()
+    : [];
+  const activeBidderIds = [...new Set(allBids.map((b) => Number(b.user_id)))];
+
+  const items = [];
+  for (const p of products) {
+    const tops = await topBidders(p.id, null);
+    const winner = await Winner.findOne({ product_id: p.id }).lean();
+    const current = await maxBid(p.id);
+    const h = (i) => {
+      const row = tops[i];
+      if (!row) return { value: null, username: null, user_id: null };
+      return {
+        value: row.amount,
+        username: row.username || row.display_name || null,
+        user_id: row.user_id,
+      };
+    };
+    items.push({
+      id: p.id,
+      name: p.name,
+      code: p.code,
+      quantity: p.quantity,
+      price: p.price,
+      min_bid_amount: p.min_bid_amount,
+      current_bid: current,
+      price_label: current > 0 ? current : p.price,
+      h1: h(0),
+      h2: h(1),
+      h3: h(2),
+      sold: !!winner,
+      winner_user_id: winner?.user_id || null,
+      status_label: winner ? "Sold" : "Unsold",
+      is_live: isLive(p) || isLive(auction),
+    });
+  }
+
+  res.json({
+    auction: {
+      ...auction,
+      phase: auctionStatusLabel(auction),
+      assigned_count: assignedIds.length,
+      active_bidders: activeBidderIds.length,
+      bidder_ratio: `${activeBidderIds.length} / ${assignedIds.length || 0}`,
+    },
+    items,
+  });
+}));
+
+router.post("/auction/:id/products/:productId/mark-sold", wrap(async (req, res) => {
+  const product = await Product.findOne({
+    id: Number(req.params.productId),
+    auction_id: Number(req.params.id),
+  });
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  let win = await Winner.findOne({ product_id: product.id });
+  if (win) return res.json({ message: "Already sold", winner: win });
+  const maxbid = await Bid.findOne({ product_id: product.id }).sort({ amount: -1 });
+  if (!maxbid) return res.status(422).json({ message: "No bids to award" });
+  win = await Winner.create({
+    product_id: product.id,
+    user_id: maxbid.user_id,
+    bid_id: maxbid.id,
+  });
+  res.json({ message: "Marked sold", winner: win });
 }));
 
 router.get("/auctions/:type?", wrap(async (req, res) => {
