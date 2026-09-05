@@ -438,7 +438,10 @@ router.post("/products", upload.single("image"), wrap(async (req, res) => {
     status: 1,
     started_at: b.started_at || auction.started_at,
     expired_at: b.expired_at || auction.expired_at,
-    gst_mode: auction.gst_mode || "exclusive",
+    gst_mode: b.gst_mode || auction.gst_mode || "exclusive",
+    gst_percent: Number(b.gst_percent || 0),
+    price_ex_gst: Number(b.price_ex_gst || priceRaw),
+    price_inc_gst: Number(b.price_inc_gst || priceRaw),
   });
   res.json({ message: "Product added successfully" });
 }));
@@ -466,6 +469,8 @@ router.put("/products/:id", upload.single("image"), wrap(async (req, res) => {
     quantity: Number(b.quantity ?? product.quantity ?? 0),
     started_at: b.started_at || auction.started_at || product.started_at,
     expired_at: b.expired_at || auction.expired_at || product.expired_at,
+    gst_mode: b.gst_mode || product.gst_mode || auction.gst_mode || "exclusive",
+    gst_percent: Number(b.gst_percent ?? product.gst_percent ?? 0),
   });
   await product.save();
   res.json({ message: "Product updated successfully", product });
@@ -509,7 +514,9 @@ router.post("/products/import", upload.single("import_file"), wrap(async (req, r
       min_bid_amount: minBid,
       code,
       condition: isCombo ? "Combo" : String(data.condition || ""),
-      location: auction.goods_location || "",
+      location: String(data.location || auction.goods_location || ""),
+      excise_duty: String(data.excise_duty || ""),
+      sales_duty: String(data.sales_duty || ""),
       quantity,
       status: 1,
       started_at: req.body.started_at || auction.started_at,
@@ -529,6 +536,11 @@ router.get("/products/import/sample/excel", wrap(async (_req, res) => {
       price: 5000,
       min_bid_amount: 300,
       quantity: 5,
+      condition: "Used",
+      location: "Chennai Yard",
+      excise_duty: "",
+      sales_duty: "18",
+      gst_percent: 18,
       combo_items: "",
     },
     {
@@ -538,6 +550,11 @@ router.get("/products/import/sample/excel", wrap(async (_req, res) => {
       price: 2200,
       min_bid_amount: 150,
       quantity: 10,
+      condition: "Mixed",
+      location: "Guindy",
+      excise_duty: "",
+      sales_duty: "",
+      gst_percent: 18,
       combo_items: "",
     },
     {
@@ -547,6 +564,11 @@ router.get("/products/import/sample/excel", wrap(async (_req, res) => {
       price: 15000,
       min_bid_amount: 750,
       quantity: 1,
+      condition: "Combo",
+      location: "Chennai Yard",
+      excise_duty: "",
+      sales_duty: "",
+      gst_percent: 18,
       combo_items: "Monitor|Keyboard|Mouse",
     },
   ];
