@@ -1,8 +1,20 @@
 import { Bid, Product, User, Transaction } from "./models.js";
-import { maxBid, randomCode, trxId } from "./helpers.js";
+import { maxBid, parseAuctionDate, randomCode, trxId } from "./helpers.js";
 
+/** Persist wall-clock time in Asia/Kolkata (same convention as admin forms). */
 function stamp(date) {
-  return date.toISOString().slice(0, 19).replace("T", " ");
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date instanceof Date ? date : new Date(date));
+  const get = (type) => parts.find((p) => p.type === type)?.value || "00";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
 export async function placeBid({ product, user, amount, agentAmount, minIncrement, io }) {
@@ -47,9 +59,9 @@ export async function placeBid({ product, user, amount, agentAmount, minIncremen
   }
 
   let expiredAt = product.expired_at;
-  const secondsLeft = (new Date(product.expired_at).getTime() - Date.now()) / 1000;
-  if (secondsLeft < 40) {
-    expiredAt = stamp(new Date(new Date(product.expired_at).getTime() + 4 * 60 * 1000));
+  const secondsLeft = (parseAuctionDate(product.expired_at) - Date.now()) / 1000;
+  if (secondsLeft > 0 && secondsLeft < 40) {
+    expiredAt = stamp(new Date(parseAuctionDate(product.expired_at) + 4 * 60 * 1000));
     await Product.updateOne({ id: product.id }, { expired_at: expiredAt });
     io?.emit("auction-time", { product_id: product.id, expired_at: expiredAt });
   }
@@ -96,9 +108,9 @@ export async function placeBid({ product, user, amount, agentAmount, minIncremen
           trx: trxId(),
         });
 
-        const extraLeft = (new Date(expiredAt).getTime() - Date.now()) / 1000;
-        if (extraLeft < 40) {
-          expiredAt = stamp(new Date(new Date(expiredAt).getTime() + 4 * 60 * 1000));
+        const extraLeft = (parseAuctionDate(expiredAt) - Date.now()) / 1000;
+        if (extraLeft > 0 && extraLeft < 40) {
+          expiredAt = stamp(new Date(parseAuctionDate(expiredAt) + 4 * 60 * 1000));
           await Product.updateOne({ id: product.id }, { expired_at: expiredAt });
           io?.emit("auction-time", { product_id: product.id, expired_at: expiredAt });
         }

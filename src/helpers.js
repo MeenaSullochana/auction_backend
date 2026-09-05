@@ -19,19 +19,54 @@ export function assignedTo(auction, userId) {
   return parseAssign(auction.assign_user).includes(Number(userId));
 }
 
+/**
+ * Auction open/close times are entered in India (IST, UTC+5:30) as
+ * "YYYY-MM-DD HH:mm:ss" without a timezone. Parse them as IST so Live /
+ * Upcoming works the same on local Windows and UTC hosts (e.g. Render).
+ */
+export function parseAuctionDate(value) {
+  if (value == null || value === "") return NaN;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  const s = String(value).trim();
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const t = new Date(s).getTime();
+    return t;
+  }
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const h = Number(m[4]);
+    const mi = Number(m[5]);
+    const sec = Number(m[6] || 0);
+    // IST = UTC+5:30 → convert to UTC epoch
+    return Date.UTC(y, mo - 1, d, h - 5, mi - 30, sec);
+  }
+  return new Date(s).getTime();
+}
+
 export function isLive(row) {
+  if (!row || Number(row.status) !== 1) return false;
   const n = Date.now();
-  const start = new Date(row.started_at).getTime();
-  const end = new Date(row.expired_at).getTime();
-  return Number(row.status) === 1 && start < n && end > n;
+  const start = parseAuctionDate(row.started_at);
+  const end = parseAuctionDate(row.expired_at);
+  if (Number.isNaN(start) || Number.isNaN(end)) return false;
+  return start <= n && end > n;
 }
 
 export function isUpcoming(row) {
-  return Number(row.status) === 1 && new Date(row.started_at).getTime() > Date.now();
+  if (!row || Number(row.status) !== 1) return false;
+  const start = parseAuctionDate(row.started_at);
+  if (Number.isNaN(start)) return false;
+  return start > Date.now();
 }
 
 export function isExpired(row) {
-  return new Date(row.expired_at).getTime() < Date.now();
+  const end = parseAuctionDate(row.expired_at);
+  if (Number.isNaN(end)) return false;
+  return end <= Date.now();
 }
 
 export function signToken(payload) {

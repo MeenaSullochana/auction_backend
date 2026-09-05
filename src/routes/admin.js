@@ -246,7 +246,14 @@ router.get("/auctions/:type?", wrap(async (req, res) => {
   const type = req.params.type || "all";
   const rows = await Auction.find().sort({ id: -1 }).lean();
   const hydrated = [];
-  for (const a of rows) hydrated.push(await hydrateAuction(a));
+  for (const a of rows) {
+    const h = await hydrateAuction(a);
+    hydrated.push({
+      ...h,
+      phase: auctionStatusLabel(h),
+      assigned_count: parseAssign(h.assign_user).length,
+    });
+  }
   res.json({ auctions: auctionFilter(hydrated, type), pageTitle: `${type} Auctions` });
 }));
 

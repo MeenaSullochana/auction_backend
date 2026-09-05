@@ -1,14 +1,25 @@
 import { Router } from "express";
 import { Auction, Bid, Product, Watchlist, Winner } from "../models.js";
-import { assignedTo, enrichProduct, isLive, maxBid, topBidders, wrap } from "../helpers.js";
+import { assignedTo, enrichProduct, isLive, isUpcoming, maxBid, topBidders, wrap } from "../helpers.js";
 import { placeBid } from "../bidService.js";
 
 const router = Router();
 
 router.get("/dashboard", wrap(async (req, res) => {
   const all = await Auction.find({ status: 1 }).sort({ id: -1 }).lean();
-  const auctions = all.filter((a) => assignedTo(a, req.auth.id) && isLive(a));
-  res.json({ auctions });
+  const mine = all.filter((a) => assignedTo(a, req.auth.id));
+  const auctions = mine
+    .filter((a) => isLive(a) || isUpcoming(a))
+    .map((a) => ({
+      ...a,
+      phase: isLive(a) ? "live" : "upcoming",
+      phase_label: isLive(a) ? "Live" : "Upcoming",
+    }));
+  res.json({
+    auctions,
+    live: auctions.filter((a) => a.phase === "live"),
+    upcoming: auctions.filter((a) => a.phase === "upcoming"),
+  });
 }));
 
 router.get("/winning-history", wrap(async (req, res) => {
@@ -34,9 +45,18 @@ router.get("/auctions/:id/products", wrap(async (req, res) => {
     return res.status(403).json({ message: "You are not assigned to this auction" });
   }
   const products = await Product.find({ auction_id: auction.id, status: 1 }).lean();
-  const live = [];
-  for (const p of products.filter(isLive)) live.push(await enrichProduct(p, req.user));
-  res.json({ auction, products: live, pageTitle: auction.name });
+  const visible = [];
+  for (const p of products.filter((row) => isLive(row) || isUpcoming(row))) {
+    visible.push(await enrichProduct(p, req.user));
+  }
+  res.json({
+    auction: {
+      ...auction,
+      phase: isLive(auction) ? "live" : isUpcoming(auction) ? "upcoming" : "closed",
+    },
+    products: visible,
+    pageTitle: auction.name,
+  });
 }));
 
 router.get("/products/:auctionId/:id", wrap(async (req, res) => {
