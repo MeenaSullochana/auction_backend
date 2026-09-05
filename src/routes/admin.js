@@ -571,7 +571,9 @@ router.get("/users/:scope?", wrap(async (req, res) => {
         String(u.username || "").toLowerCase().includes(q) ||
         String(u.email || "").toLowerCase().includes(q) ||
         String(u.mobile || "").includes(q) ||
+        String(u.contact_no || "").includes(q) ||
         String(u.firm_name || "").toLowerCase().includes(q) ||
+        String(u.contact_person || "").toLowerCase().includes(q) ||
         String(u.unique_id || "").toLowerCase().includes(q)
     );
   }
