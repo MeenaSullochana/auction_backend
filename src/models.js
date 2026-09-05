@@ -28,8 +28,17 @@ const adminSchema = new mongoose.Schema(
 );
 withId(adminSchema, "admins");
 
+const fileRefSchema = {
+  filename: String,
+  originalname: String,
+  mimetype: String,
+  kind: { type: String, default: "file" },
+};
+
 const userSchema = new mongoose.Schema(
   {
+    kind: { type: String, default: "vendor" }, // all login users are vendors (bidders)
+    unique_id: { type: String, unique: true, sparse: true },
     firstname: String,
     lastname: String,
     username: { type: String, unique: true },
@@ -43,9 +52,22 @@ const userSchema = new mongoose.Schema(
     city: String,
     state: String,
     zip: String,
-    status: { type: Number, default: 1 },
+    status: { type: Number, default: 1 }, // 1 active, 0 inactive
     approve: { type: Number, default: 0 },
     user_code: String,
+    // Vendor / bidder enrolment fields
+    name: String,
+    firm_name: String,
+    contact_person: String,
+    contact_no: String,
+    alternate_contact_no: String,
+    contact_email: String,
+    gst_no: String,
+    pan_no: String,
+    validation_status: { type: String, default: "Pending" },
+    documents: { type: [fileRefSchema], default: [] },
+    images: { type: [fileRefSchema], default: [] },
+    notes: String,
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
@@ -60,11 +82,21 @@ withId(categorySchema, "categories");
 const auctionSchema = new mongoose.Schema(
   {
     name: String,
+    unique_id: { type: String, unique: true, sparse: true },
     icon: { type: String, default: "las la-gavel" },
     status: { type: Number, default: 1 },
     started_at: String,
     expired_at: String,
     assign_user: { type: String, default: "[]" },
+    auction_type: { type: String, default: "Open Auction" },
+    auction_category: { type: String, default: "E-waste" },
+    firm: { type: String, default: "" },
+    firm_kind: { type: String, default: "Company" },
+    division: { type: String, default: "Mobile" },
+    item_type: { type: String, default: "Product" },
+    inv_type: { type: String, default: "Good" },
+    goods_location: { type: String, default: "" },
+    gst_mode: { type: String, default: "exclusive" },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
@@ -89,6 +121,10 @@ const productSchema = new mongoose.Schema(
     status: { type: Number, default: 1 },
     started_at: String,
     expired_at: String,
+    gst_mode: { type: String, default: "exclusive" },
+    gst_percent: { type: Number, default: 0 },
+    price_ex_gst: { type: Number, default: 0 },
+    price_inc_gst: { type: Number, default: 0 },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
@@ -129,9 +165,79 @@ const contactSchema = new mongoose.Schema({
   email: String,
   subject: String,
   message: String,
+  firm_name: String,
+  address: String,
+  contact_person: String,
+  contact_no: String,
+  type: { type: String, default: "enquiry" },
+  mail_sent: { type: Boolean, default: false },
+  mail_note: String,
   created_at: { type: Date, default: Date.now },
 });
 withId(contactSchema, "contacts");
+
+const vendorSchema = new mongoose.Schema(
+  {
+    unique_id: { type: String, unique: true, sparse: true },
+    name: String,
+    firm_name: String,
+    address: String,
+    contact_person: String,
+    contact_no: String,
+    alternate_contact_no: String,
+    contact_email: String,
+    gst_no: String,
+    pan_no: String,
+    validation_status: { type: String, default: "Pending" },
+    documents: { type: [fileRefSchema], default: [] },
+    images: { type: [fileRefSchema], default: [] },
+    notes: String,
+  },
+  { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
+);
+withId(vendorSchema, "vendors");
+
+const companySchema = new mongoose.Schema(
+  {
+    unique_id: { type: String, unique: true, sparse: true },
+    firm_name: String,
+    address: String,
+    gst_no: String,
+    pan_no: String,
+    contact_l1_name: String,
+    contact_l1_no: String,
+    contact_l1_email: String,
+    contact_l2_name: String,
+    contact_l2_no: String,
+    contact_l2_email: String,
+    contact_l3_name: String,
+    contact_l3_no: String,
+    contact_l3_email: String,
+    finance_contact_person: String,
+    finance_email: String,
+    validation_status: { type: String, default: "Pending" },
+    documents: { type: [fileRefSchema], default: [] },
+    images: { type: [fileRefSchema], default: [] },
+    notes: String,
+  },
+  { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
+);
+withId(companySchema, "companies");
+
+const heroSlideSchema = new mongoose.Schema(
+  {
+    image: String,
+    kicker: { type: String, default: "" },
+    title: { type: String, default: "" },
+    text: { type: String, default: "" },
+    button_label: { type: String, default: "Explore" },
+    button_link: { type: String, default: "/auction" },
+    sort_order: { type: Number, default: 0 },
+    status: { type: Number, default: 1 },
+  },
+  { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
+);
+withId(heroSlideSchema, "hero_slides");
 
 const passwordResetSchema = new mongoose.Schema({ email: String, token: String, created_at: { type: Date, default: Date.now } });
 
@@ -153,6 +259,12 @@ const siteSettingSchema = new mongoose.Schema(
     colorAccent2: { type: String, default: "#C5E3B4" },
     colorText: { type: String, default: "#F4F7F2" },
     colorMuted: { type: String, default: "#A8B8A4" },
+    adminNotifyEmail: { type: String, default: "auction@gmail.com" },
+    vendorEnrolmentMail: {
+      type: String,
+      default:
+        "Dear Vendor,\n\nThank you for your enquiry with The Auction House.\n\nPlease find enclosed / request for:\n1. Vendor enrolment documents\n2. Auction House terms & conditions\n3. Vendor registration fee details\n\nKindly complete registration after document submission.\n\nRegards,\nThe Auction House\nChennai",
+    },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
 );
@@ -171,6 +283,9 @@ export const DEFAULT_SITE = {
   colorAccent2: "#C5E3B4",
   colorText: "#F4F7F2",
   colorMuted: "#A8B8A4",
+  adminNotifyEmail: "auction@gmail.com",
+  vendorEnrolmentMail:
+    "Dear Vendor,\n\nThank you for your enquiry with The Auction House.\n\nPlease find enclosed / request for:\n1. Vendor enrolment documents\n2. Auction House terms & conditions\n3. Vendor registration fee details\n\nKindly complete registration after document submission.\n\nRegards,\nThe Auction House\nChennai",
 };
 
 export async function getSiteSettings() {
@@ -188,6 +303,9 @@ export const Bid = mongoose.models.Bid || mongoose.model("Bid", bidSchema);
 export const Winner = mongoose.models.Winner || mongoose.model("Winner", winnerSchema);
 export const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);
 export const Contact = mongoose.models.Contact || mongoose.model("Contact", contactSchema);
+export const Vendor = mongoose.models.Vendor || mongoose.model("Vendor", vendorSchema);
+export const Company = mongoose.models.Company || mongoose.model("Company", companySchema);
+export const HeroSlide = mongoose.models.HeroSlide || mongoose.model("HeroSlide", heroSlideSchema);
 export const PasswordReset = mongoose.models.PasswordReset || mongoose.model("PasswordReset", passwordResetSchema);
 export const Watchlist = mongoose.models.Watchlist || mongoose.model("Watchlist", watchlistSchema);
 export const SiteSetting = mongoose.models.SiteSetting || mongoose.model("SiteSetting", siteSettingSchema);
