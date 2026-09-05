@@ -5,6 +5,45 @@ import { placeBid } from "../bidService.js";
 
 const router = Router();
 
+async function assertAssignedAuction(auctionId, userId) {
+  const auction = await Auction.findOne({ id: Number(auctionId) }).lean();
+  if (!auction) return { error: { status: 404, message: "Auction not found" } };
+  if (!assignedTo(auction, userId)) {
+    return { error: { status: 403, message: "You are not assigned to this auction" } };
+  }
+  return { auction };
+}
+
+async function favouriteProductIds(userId, auctionId) {
+  const rows = await Watchlist.find({ user_id: userId }).lean();
+  const ids = rows.map((r) => Number(r.product_id));
+  if (!ids.length) return [];
+  const inAuction = await Product.find({ auction_id: Number(auctionId), id: { $in: ids } }).select("id").lean();
+  return inAuction.map((p) => Number(p.id));
+}
+
+async function enrichRoomProduct(product, viewer) {
+  const enriched = await enrichProduct(product, viewer);
+  const tops = await topBidders(product.id, viewer);
+  const myBid = await Bid.findOne({ product_id: product.id, user_id: viewer.id }).lean();
+  const winner = await Winner.findOne({ product_id: product.id }).lean();
+  let rank_label = "—";
+  if (winner) {
+    rank_label = Number(winner.user_id) === Number(viewer.id) ? "Sold (You)" : "Sold";
+  } else {
+    const mine = tops.find((b) => Number(b.user_id) === Number(viewer.id));
+    if (mine?.position) rank_label = String(mine.position).toUpperCase();
+    else if (myBid) rank_label = "Out";
+  }
+  return {
+    ...enriched,
+    my_bid: myBid?.amount || 0,
+    rank_label,
+    top_bidders: tops,
+    is_sold: !!winner,
+  };
+}
+
 router.get("/dashboard", wrap(async (req, res) => {
   const all = await Auction.find({ status: 1 }).sort({ id: -1 }).lean();
   const mine = all.filter((a) => assignedTo(a, req.auth.id));
@@ -39,15 +78,18 @@ router.get("/winning-history", wrap(async (req, res) => {
 }));
 
 router.get("/auctions/:id/products", wrap(async (req, res) => {
-  const auction = await Auction.findOne({ id: Number(req.params.id) }).lean();
-  if (!auction) return res.status(404).json({ message: "Auction not found" });
-  if (!assignedTo(auction, req.auth.id)) {
-    return res.status(403).json({ message: "You are not assigned to this auction" });
-  }
-  const products = await Product.find({ auction_id: auction.id, status: 1 }).lean();
+  const gate = await assertAssignedAuction(req.params.id, req.auth.id);
+  if (gate.error) return res.status(gate.error.status).json({ message: gate.error.message });
+  const { auction } = gate;
+  const products = await Product.find({ auction_id: auction.id, status: 1 }).sort({ id: 1 }).lean();
+  const favIds = await favouriteProductIds(req.auth.id, auction.id);
   const visible = [];
-  for (const p of products.filter((row) => isLive(row) || isUpcoming(row))) {
-    visible.push(await enrichProduct(p, req.user));
+  const catalog = (isLive(auction) || isUpcoming(auction))
+    ? products
+    : products.filter((row) => isLive(row) || isUpcoming(row));
+  for (const p of catalog) {
+    const row = await enrichProduct(p, req.user);
+    visible.push({ ...row, is_favourite: favIds.includes(Number(p.id)) });
   }
   res.json({
     auction: {
@@ -55,6 +97,49 @@ router.get("/auctions/:id/products", wrap(async (req, res) => {
       phase: isLive(auction) ? "live" : isUpcoming(auction) ? "upcoming" : "closed",
     },
     products: visible,
+    favourite_ids: favIds,
+    pageTitle: auction.name,
+  });
+}));
+
+/** Bidder room: auction header + item rows (favourites filter when live). */
+router.get("/auctions/:id/room", wrap(async (req, res) => {
+  const gate = await assertAssignedAuction(req.params.id, req.auth.id);
+  if (gate.error) return res.status(gate.error.status).json({ message: gate.error.message });
+  const { auction } = gate;
+  const favIds = await favouriteProductIds(req.auth.id, auction.id);
+  const all = await Product.find({ auction_id: auction.id, status: 1 }).sort({ id: 1 }).lean();
+  const catalog = (isLive(auction) || isUpcoming(auction))
+    ? all
+    : all.filter((row) => isLive(row) || isUpcoming(row));
+  const livePhase = isLive(auction);
+  const q = req.query.favourites_only;
+  const wantFavOnly = String(q) === "1" || (livePhase && favIds.length > 0 && String(q) !== "0");
+
+  let selected = catalog;
+  if (wantFavOnly && favIds.length) {
+    selected = catalog.filter((p) => favIds.includes(Number(p.id)));
+  }
+
+  const products = [];
+  for (const p of selected) {
+    const row = await enrichRoomProduct(p, req.user);
+    products.push({ ...row, is_favourite: favIds.includes(Number(p.id)) });
+  }
+
+  const others = catalog
+    .filter((p) => !favIds.includes(Number(p.id)))
+    .map((p) => ({ id: p.id, code: p.code, name: p.name }));
+
+  res.json({
+    auction: {
+      ...auction,
+      phase: livePhase ? "live" : isUpcoming(auction) ? "upcoming" : "closed",
+    },
+    products,
+    favourite_ids: favIds,
+    favourites_only: !!(wantFavOnly && favIds.length),
+    other_items: others,
     pageTitle: auction.name,
   });
 }));
@@ -70,46 +155,85 @@ router.get("/products/:auctionId/:id", wrap(async (req, res) => {
   if (!assignedTo(auction, req.auth.id)) {
     return res.status(403).json({ message: "You are not assigned to this auction" });
   }
+  const siblings = await Product.find({ auction_id: auction.id, status: 1 }).sort({ id: 1 }).select("id code name").lean();
+  const idx = siblings.findIndex((s) => Number(s.id) === Number(product.id));
   const userBid = await Bid.findOne({ product_id: product.id, user_id: req.auth.id }).lean();
+  const favIds = await favouriteProductIds(req.auth.id, auction.id);
+  const room = await enrichRoomProduct(product, req.user);
   res.json({
-    product: await enrichProduct(product, req.user),
+    product: { ...room, is_favourite: favIds.includes(Number(product.id)) },
+    auction,
     max_pro: await maxBid(product.id),
     getUserBid: userBid,
-    max_bid: await topBidders(product.id, req.user),
+    max_bid: room.top_bidders,
+    siblings,
+    prev_id: idx > 0 ? siblings[idx - 1].id : null,
+    next_id: idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1].id : null,
   });
 }));
 
 router.get("/auctions/:auctionId/multiple", wrap(async (req, res) => {
-  const auction = await Auction.findOne({ id: Number(req.params.auctionId) }).lean();
-  if (!auction || !assignedTo(auction, req.auth.id)) {
-    return res.status(403).json({ message: "No auction Found" });
-  }
-  const products = await Product.find({ auction_id: auction.id, status: 1 }).lean();
+  const gate = await assertAssignedAuction(req.params.auctionId, req.auth.id);
+  if (gate.error) return res.status(gate.error.status).json({ message: gate.error.message });
+  const { auction } = gate;
+  const products = await Product.find({ auction_id: auction.id, status: 1 }).sort({ id: 1 }).lean();
+  const favIds = await favouriteProductIds(req.auth.id, auction.id);
   const live = [];
-  for (const p of products.filter(isLive)) live.push(await enrichProduct(p, req.user));
-  res.json({ products: live });
+  for (const p of products.filter((row) => isLive(row) || isUpcoming(row))) {
+    live.push({ ...(await enrichProduct(p, req.user)), is_favourite: favIds.includes(Number(p.id)) });
+  }
+  res.json({ products: live, favourite_ids: favIds, auction });
 }));
 
+/** Replace favourites for one auction (keeps favourites from other auctions). */
 router.post("/watchlist", wrap(async (req, res) => {
-  const ids = req.body.productids || [];
-  await Watchlist.deleteMany({ user_id: req.auth.id });
-  if (ids.length) {
-    await Watchlist.insertMany(ids.map((id) => ({ user_id: req.auth.id, product_id: Number(id) })));
+  const auctionId = Number(req.body.auction_id || req.body.auctionId || 0);
+  const ids = (req.body.productids || req.body.product_ids || []).map(Number).filter(Boolean);
+  if (auctionId) {
+    const inAuction = await Product.find({ auction_id: auctionId }).select("id").lean();
+    const auctionProductIds = inAuction.map((p) => Number(p.id));
+    await Watchlist.deleteMany({ user_id: req.auth.id, product_id: { $in: auctionProductIds } });
+    if (ids.length) {
+      await Watchlist.insertMany(ids.map((id) => ({ user_id: req.auth.id, product_id: id })));
+    }
+  } else {
+    await Watchlist.deleteMany({ user_id: req.auth.id });
+    if (ids.length) {
+      await Watchlist.insertMany(ids.map((id) => ({ user_id: req.auth.id, product_id: id })));
+    }
   }
-  res.json({ message: "success" });
+  res.json({ message: "Favourites saved", favourite_ids: ids });
+}));
+
+router.post("/favourites/toggle", wrap(async (req, res) => {
+  const productId = Number(req.body.product_id);
+  const product = await Product.findOne({ id: productId }).lean();
+  if (!product) return res.status(404).json({ message: "Product not found" });
+  const auction = await Auction.findOne({ id: product.auction_id }).lean();
+  if (!assignedTo(auction, req.auth.id)) {
+    return res.status(403).json({ message: "You are not assigned to this auction" });
+  }
+  const existing = await Watchlist.findOne({ user_id: req.auth.id, product_id: productId });
+  if (existing) {
+    await Watchlist.deleteOne({ _id: existing._id });
+    return res.json({ favourited: false, product_id: productId });
+  }
+  await Watchlist.create({ user_id: req.auth.id, product_id: productId });
+  res.json({ favourited: true, product_id: productId });
 }));
 
 router.get("/auctions/:auctionId/watch", wrap(async (req, res) => {
-  const values = (await Watchlist.find({ user_id: req.auth.id }).lean()).map((r) => r.product_id);
-  if (!values.length) return res.status(422).json({ message: "No auction Found" });
-  const auction = await Auction.findOne({ id: Number(req.params.auctionId) }).lean();
-  if (!auction || !assignedTo(auction, req.auth.id)) {
-    return res.status(403).json({ message: "No auction Found" });
+  const gate = await assertAssignedAuction(req.params.auctionId, req.auth.id);
+  if (gate.error) return res.status(gate.error.status).json({ message: gate.error.message });
+  const { auction } = gate;
+  const favIds = await favouriteProductIds(req.auth.id, auction.id);
+  if (!favIds.length) return res.json({ products: [], message: "No favourites yet" });
+  const products = await Product.find({ id: { $in: favIds }, auction_id: auction.id, status: 1 }).sort({ id: 1 }).lean();
+  const out = [];
+  for (const p of products) {
+    out.push({ ...(await enrichRoomProduct(p, req.user)), is_favourite: true });
   }
-  const products = await Product.find({ id: { $in: values }, auction_id: auction.id, status: 1 }).lean();
-  const live = [];
-  for (const p of products.filter(isLive)) live.push(await enrichProduct(p, req.user));
-  res.json({ products: live });
+  res.json({ products: out, auction });
 }));
 
 router.post("/bid", wrap(async (req, res) => {
